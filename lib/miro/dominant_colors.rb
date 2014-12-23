@@ -3,7 +3,7 @@ module Miro
     attr_accessor :src_image_path
 
     def initialize(src_image_path, image_type = nil)
-      @src_image_path = src_image_path
+      @src_image_path = src_image_path	
       @image_type = image_type
     end
 
@@ -46,7 +46,7 @@ module Miro
     end
 
     def histogram
-      @histogram ||= downsample_and_histogram.sort_by { |item| item[0]  }.reverse
+      @histogram || downsample_and_histogram.sort_by { |item| item[0]  }.reverse
     end
   private
 
@@ -77,48 +77,52 @@ module Miro
     def downsample_colors_and_convert_to_png!
       @source_image = open_source_image
       @downsampled_image = open_downsampled_image
-
+	  @in = @source_image
+	  @out = @downsampled_image	 
+	  
       Cocaine::CommandLine.new(Miro.options[:image_magick_path], image_magick_params).
-        run(:in => File.expand_path(@source_image.path),
-            :resolution => Miro.options[:resolution],
-            :colors => Miro.options[:color_count].to_s,
-            :quantize => Miro.options[:quantize],
-            :out => File.expand_path(@downsampled_image.path))
+        run(in: @in,
+            resolution: Miro.options[:resolution],
+            colors: Miro.options[:color_count].to_s,
+            quantize: Miro.options[:quantize],
+            out: @out)
+			
     end
 
     def open_source_image
       return File.open(@src_image_path) unless remote_source_image?
-
       original_extension = @image_type || URI.parse(@src_image_path).path.split('.').last
-
-      tempfile = Tempfile.open(["source", ".#{original_extension}"])
-      remote_file_data = open(@src_image_path).read
-
-      tempfile.write(should_force_encoding? ? remote_file_data.force_encoding("UTF-8") : remote_file_data)
-      tempfile.close
-      tempfile
-    end
-
-    def should_force_encoding?
-      Gem::Version.new(RUBY_VERSION.dup) >= Gem::Version.new('1.9')
+	  hash = Digest::SHA1.hexdigest @src_image_path
+	  temp_dir = Dir.tmpdir() 
+	  path = "#{temp_dir}/#{hash}.#{original_extension}"
+	  FileUtils.touch(path)	      
+	  open(path, 'wb') do |file|
+	    file << open(@src_image_path).read
+	  end
+      path
     end
 
     def open_downsampled_image
-      tempfile = Tempfile.open(["downsampled", '.png'])
-      tempfile.binmode
-      tempfile
+		temp_dir = Dir.tmpdir() 
+		hash = Digest::SHA1.hexdigest "#{@src_image_path}"
+		path = "#{temp_dir}/#{hash}-downsampled.png"
+		FileUtils.touch(path)
+		tempfile = File.open(path)
+		tempfile.binmode
+		tempfile.close
+		path
     end
 
     def image_magick_params
       if Miro.histogram?
-        "':in[0]' -resize :resolution -colors :colors -colorspace :quantize -quantize :quantize -alpha remove -format %c histogram:info:"
+        ":in -resize :resolution -colors :colors -colorspace :quantize -quantize :quantize -alpha remove -format %c histogram:info:"
       else
-        "':in[0]' -resize :resolution -colors :colors -colorspace :quantize -quantize :quantize :out"
+        ":in -resize :resolution -colors :colors -colorspace :quantize -quantize :quantize :out"
       end
     end
 
     def group_pixels_by_color
-      @pixels ||= ChunkyPNG::Image.from_file(File.expand_path(@downsampled_image.path)).pixels
+      @pixels ||= ChunkyPNG::Image.from_file(File.expand_path(@downsampled_image)).pixels
       @grouped_pixels ||= @pixels.group_by { |pixel| pixel }
     end
 
@@ -126,9 +130,9 @@ module Miro
       group_pixels_by_color.sort_by { |k,v| v.size }.reverse.flatten.uniq
     end
 
-    def cleanup_temporary_files!
-      @source_image.close! if remote_source_image?
-      @downsampled_image.close! if @downsampled_image
+    def cleanup_temporary_files!     
+	  FileUtils.rm_rf(@source_image)
+	  FileUtils.rm_rf(@downsampled_image)
     end
 
     def remote_source_image?
